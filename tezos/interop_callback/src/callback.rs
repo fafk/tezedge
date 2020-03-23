@@ -224,6 +224,7 @@ fn context_set(
         value_as_json,
         start_time,
         end_time,
+        tezedge_time: 0,
     }).expect("context_set error");
 }
 

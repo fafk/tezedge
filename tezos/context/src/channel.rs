@@ -50,6 +50,7 @@ pub enum ContextAction {
         value_as_json: Option<String>,
         start_time: f64,
         end_time: f64,
+        tezedge_time: u128,
     },
     Delete {
         context_hash: Option<Hash>,
