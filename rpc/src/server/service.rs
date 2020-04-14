@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use failure::bail;
 use serde::{Deserialize, Serialize};
 
-use crypto::hash::chain_id_to_b58_string;
+use crypto::hash::{chain_id_to_b58_string, HashType, BlockHash};
 use shell::shell_channel::BlockApplied;
 use shell::stats::memory::{Memory, MemoryData, MemoryStatsResult};
 use storage::{BlockHeaderWithHash, BlockStorage, BlockStorageReader, ContextActionRecordValue, ContextActionStorage};
@@ -22,6 +22,7 @@ use crate::ContextList;
 use crate::helpers::{BlockHeaderInfo, FullBlockInfo, get_block_hash_by_block_id, get_context_protocol_params, PagedResult};
 use crate::rpc_actor::RpcCollectedStateRef;
 use storage::context_action_storage::contract_id_to_contract_address_for_index;
+use std::time::Instant;
 
 // Serialize, Deserialize,
 #[derive(Serialize, Deserialize, Debug)]
@@ -58,6 +59,10 @@ pub(crate) fn get_blocks(every_nth_level: Option<i32>, block_id: &str, limit: us
 pub(crate) fn get_block_actions(block_id: &str, persistent_storage: &PersistentStorage, state: &RpcCollectedStateRef) -> Result<Vec<ContextAction>, failure::Error> {
     let context_action_storage = ContextActionStorage::new(persistent_storage);
     let block_hash = get_block_hash_by_block_id(block_id, persistent_storage, state)?;
+    get_block_actions_by_hash(&context_action_storage, &block_hash)
+}
+
+fn get_block_actions_by_hash(context_action_storage: &ContextActionStorage, block_hash: &Vec<u8>) -> Result<Vec<ContextAction>, failure::Error> {
     context_action_storage.get_by_block_hash(&block_hash)
         .map(|values| values.into_iter().map(|v| v.into_action()).collect())
         .map_err(|e| e.into())
@@ -138,7 +143,6 @@ pub(crate) fn get_context_constants_just_for_rpc(
     list: ContextList,
     persistent_storage: &PersistentStorage,
     state: &RpcCollectedStateRef) -> Result<Option<RpcJsonMap>, failure::Error> {
-
     let context_proto_params = get_context_protocol_params(
         block_id,
         opt_level,
@@ -357,6 +361,48 @@ pub(crate) fn get_stats_memory() -> MemoryStatsResult<MemoryData> {
 
 pub(crate) fn get_context(level: &str, list: ContextList) -> Result<Option<HashMap<String, Bucket<Vec<u8>>>>, failure::Error> {
     crate::helpers::get_context(level, list)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ActionStats {
+    total_time: f64,
+    total_actions: u32,
+}
+
+pub(crate) fn compute_storage_stats<'a>(state: &RpcCollectedStateRef, from_block: &str, persistent_storage: &PersistentStorage) -> Result<HashMap<&'a str, ActionStats>, failure::Error> {
+    let context_action_storage = ContextActionStorage::new(persistent_storage);
+    let block_storage = BlockStorage::new(persistent_storage);
+    let mut stats: HashMap<&str, ActionStats> = HashMap::new();
+    let mut add_action = |key: &'a str, time: f64| {
+        let mut action_stats = stats
+            .entry(key)
+            .or_insert(ActionStats { total_time: 0f64, total_actions: 0 });
+        action_stats.total_time += time;
+        action_stats.total_actions += 1;
+    };
+
+    let blocks = block_storage.get_multiple_without_json(
+        &HashType::BlockHash.string_to_bytes(from_block).unwrap(), std::usize::MAX)?;
+
+    let now = Instant::now();
+    for block in blocks {
+        let actions = get_block_actions_by_hash(&context_action_storage, &block.hash).unwrap();
+        actions.iter().for_each(|action| match action {
+            ContextAction::Set { start_time, end_time, .. } => add_action("SET", *end_time - *start_time),
+            ContextAction::Delete { start_time, end_time, .. } => add_action("DEL", *end_time - *start_time),
+            ContextAction::RemoveRecursively { start_time, end_time, .. } => add_action("REMREC", *end_time - *start_time),
+            ContextAction::Copy { start_time, end_time, .. } => add_action("COPY", *end_time - *start_time),
+            ContextAction::Checkout { start_time, end_time, .. } => add_action("CHECKOUT", *end_time - *start_time),
+            ContextAction::Commit { start_time, end_time, .. } => add_action("COMMIT", *end_time - *start_time),
+            ContextAction::Mem { start_time, end_time, .. } => add_action("MEM", *end_time - *start_time),
+            ContextAction::DirMem { start_time, end_time, .. } => add_action("DIRMEM", *end_time - *start_time),
+            ContextAction::Get { start_time, end_time, .. } => add_action("GET", *end_time - *start_time),
+            ContextAction::Fold { start_time, end_time, .. } => add_action("FOLD", *end_time - *start_time),
+            ContextAction::Shutdown => {}
+        });
+    }
+
+    Ok(stats)
 }
 
 #[inline]
