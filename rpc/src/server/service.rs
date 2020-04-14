@@ -5,8 +5,11 @@ use std::collections::HashMap;
 
 use failure::bail;
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, MutexGuard};
+use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
 
-use crypto::hash::{chain_id_to_b58_string, HashType, BlockHash};
+use crypto::hash::{chain_id_to_b58_string, HashType};
 use shell::shell_channel::BlockApplied;
 use shell::stats::memory::{Memory, MemoryData, MemoryStatsResult};
 use storage::{BlockHeaderWithHash, BlockStorage, BlockStorageReader, ContextActionRecordValue, ContextActionStorage};
@@ -22,7 +25,6 @@ use crate::ContextList;
 use crate::helpers::{BlockHeaderInfo, FullBlockInfo, get_block_hash_by_block_id, get_context_protocol_params, PagedResult};
 use crate::rpc_actor::RpcCollectedStateRef;
 use storage::context_action_storage::contract_id_to_contract_address_for_index;
-use std::time::Instant;
 
 // Serialize, Deserialize,
 #[derive(Serialize, Deserialize, Debug)]
@@ -369,40 +371,39 @@ pub struct ActionStats {
     total_actions: u32,
 }
 
-pub(crate) fn compute_storage_stats<'a>(state: &RpcCollectedStateRef, from_block: &str, persistent_storage: &PersistentStorage) -> Result<HashMap<&'a str, ActionStats>, failure::Error> {
+fn add_action<'a>(stats: &mut MutexGuard<HashMap<&'a str, ActionStats>>, key: &'a str, time: f64) {
+    let mut action_stats = stats
+        .entry(key).or_insert(ActionStats { total_time: 0f64, total_actions: 0 });
+    action_stats.total_time += time;
+    action_stats.total_actions += 1;
+}
+
+pub(crate) fn compute_storage_stats<'a>(_state: &RpcCollectedStateRef, from_block: &str, persistent_storage: &PersistentStorage) -> Result<HashMap<&'a str, ActionStats>, failure::Error> {
     let context_action_storage = ContextActionStorage::new(persistent_storage);
     let block_storage = BlockStorage::new(persistent_storage);
-    let mut stats: HashMap<&str, ActionStats> = HashMap::new();
-    let mut add_action = |key: &'a str, time: f64| {
-        let mut action_stats = stats
-            .entry(key)
-            .or_insert(ActionStats { total_time: 0f64, total_actions: 0 });
-        action_stats.total_time += time;
-        action_stats.total_actions += 1;
-    };
+    let stats: Mutex<HashMap<&str, ActionStats>> = Mutex::new(HashMap::new());
 
     let blocks = block_storage.get_multiple_without_json(
         &HashType::BlockHash.string_to_bytes(from_block).unwrap(), std::usize::MAX)?;
-
-    let now = Instant::now();
-    for block in blocks {
-        let actions = get_block_actions_by_hash(&context_action_storage, &block.hash).unwrap();
+    blocks.par_iter().for_each(|block| {
+        let actions = get_block_actions_by_hash(&context_action_storage, &block.hash).expect("Failed to extract actions from a block!");
+        let mut stats = stats.lock().expect("Unable to lock mutex!");
         actions.iter().for_each(|action| match action {
-            ContextAction::Set { start_time, end_time, .. } => add_action("SET", *end_time - *start_time),
-            ContextAction::Delete { start_time, end_time, .. } => add_action("DEL", *end_time - *start_time),
-            ContextAction::RemoveRecursively { start_time, end_time, .. } => add_action("REMREC", *end_time - *start_time),
-            ContextAction::Copy { start_time, end_time, .. } => add_action("COPY", *end_time - *start_time),
-            ContextAction::Checkout { start_time, end_time, .. } => add_action("CHECKOUT", *end_time - *start_time),
-            ContextAction::Commit { start_time, end_time, .. } => add_action("COMMIT", *end_time - *start_time),
-            ContextAction::Mem { start_time, end_time, .. } => add_action("MEM", *end_time - *start_time),
-            ContextAction::DirMem { start_time, end_time, .. } => add_action("DIRMEM", *end_time - *start_time),
-            ContextAction::Get { start_time, end_time, .. } => add_action("GET", *end_time - *start_time),
-            ContextAction::Fold { start_time, end_time, .. } => add_action("FOLD", *end_time - *start_time),
+            ContextAction::Set { start_time, end_time, .. } => add_action(&mut stats, "SET", *end_time - *start_time),
+            ContextAction::Delete { start_time, end_time, .. } => add_action(&mut stats, "DEL", *end_time - *start_time),
+            ContextAction::RemoveRecursively { start_time, end_time, .. } => add_action(&mut stats, "REMREC", *end_time - *start_time),
+            ContextAction::Copy { start_time, end_time, .. } => add_action(&mut stats, "COPY", *end_time - *start_time),
+            ContextAction::Checkout { start_time, end_time, .. } => add_action(&mut stats, "CHECKOUT", *end_time - *start_time),
+            ContextAction::Commit { start_time, end_time, .. } => add_action(&mut stats, "COMMIT", *end_time - *start_time),
+            ContextAction::Mem { start_time, end_time, .. } => add_action(&mut stats, "MEM", *end_time - *start_time),
+            ContextAction::DirMem { start_time, end_time, .. } => add_action(&mut stats, "DIRMEM", *end_time - *start_time),
+            ContextAction::Get { start_time, end_time, .. } => add_action(&mut stats, "GET", *end_time - *start_time),
+            ContextAction::Fold { start_time, end_time, .. } => add_action(&mut stats, "FOLD", *end_time - *start_time),
             ContextAction::Shutdown => {}
         });
-    }
+    });
 
-    Ok(stats)
+    Ok(stats.into_inner().expect("Unable to access the contents of mutex!"))
 }
 
 #[inline]
