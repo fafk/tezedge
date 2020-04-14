@@ -37,6 +37,15 @@ pub async fn dev_context(_: Request<Body>, params: Params, _: Query, env: RpcSer
     result_to_json_response(service::get_context(context_level, env.persistent_storage().context_storage()), env.log())
 }
 
+pub async fn dev_stats_storage(_: Request<Body>, _: Params, _: Query, env: RpcServiceEnvironment) -> ServiceResult {
+    result_to_json_response(
+        service::compute_storage_stats(
+            env.state(),
+            env.genesis_hash(),
+            env.persistent_storage()),
+        env.log())
+}
+
 pub async fn dev_stats_memory(_: Request<Body>, _: Params, _: Query, env: RpcServiceEnvironment) -> ServiceResult {
     match service::get_stats_memory() {
         Ok(resp) => make_json_response(&resp),

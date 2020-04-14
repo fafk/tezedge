@@ -36,6 +36,7 @@ pub(crate) fn create_routes() -> PathTree<Handler> {
     routes.handle("/dev/chains/main/actions/contracts/:contract_id", dev_handler::dev_contract_actions);
     routes.handle("/dev/context/:id", dev_handler::dev_context);
     routes.handle("/stats/memory", dev_handler::dev_stats_memory);
+    routes.handle("/stats/storage", dev_handler::dev_stats_storage);
     routes.handle("/p2p/:offset/:count", dev_handler::p2p_messages);
     routes.handle("/p2p/:offset/:count/:host", dev_handler::p2p_host_messages);
 
