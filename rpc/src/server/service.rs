@@ -1,15 +1,12 @@
 // Copyright (c) SimpleStaking and Tezedge Contributors
 // SPDX-License-Identifier: MIT
 
-use std::collections::HashMap;
+use std::collections::{HashMap};
 
 use failure::bail;
 use serde::{Deserialize, Serialize};
-use std::sync::{Mutex, MutexGuard};
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelRefIterator;
 
-use crypto::hash::{chain_id_to_b58_string, HashType};
+use crypto::hash::{chain_id_to_b58_string};
 use shell::shell_channel::BlockApplied;
 use shell::stats::memory::{Memory, MemoryData, MemoryStatsResult};
 use storage::{BlockHeaderWithHash, BlockStorage, BlockStorageReader, ContextActionRecordValue, ContextActionStorage};
@@ -64,7 +61,7 @@ pub(crate) fn get_block_actions(block_id: &str, persistent_storage: &PersistentS
     get_block_actions_by_hash(&context_action_storage, &block_hash)
 }
 
-fn get_block_actions_by_hash(context_action_storage: &ContextActionStorage, block_hash: &Vec<u8>) -> Result<Vec<ContextAction>, failure::Error> {
+pub(crate) fn get_block_actions_by_hash(context_action_storage: &ContextActionStorage, block_hash: &Vec<u8>) -> Result<Vec<ContextAction>, failure::Error> {
     context_action_storage.get_by_block_hash(&block_hash)
         .map(|values| values.into_iter().map(|v| v.into_action()).collect())
         .map_err(|e| e.into())
@@ -363,47 +360,6 @@ pub(crate) fn get_stats_memory() -> MemoryStatsResult<MemoryData> {
 
 pub(crate) fn get_context(level: &str, list: ContextList) -> Result<Option<HashMap<String, Bucket<Vec<u8>>>>, failure::Error> {
     crate::helpers::get_context(level, list)
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ActionStats {
-    total_time: f64,
-    total_actions: u32,
-}
-
-fn add_action<'a>(stats: &mut MutexGuard<HashMap<&'a str, ActionStats>>, key: &'a str, time: f64) {
-    let mut action_stats = stats
-        .entry(key).or_insert(ActionStats { total_time: 0f64, total_actions: 0 });
-    action_stats.total_time += time;
-    action_stats.total_actions += 1;
-}
-
-pub(crate) fn compute_storage_stats<'a>(_state: &RpcCollectedStateRef, from_block: &str, persistent_storage: &PersistentStorage) -> Result<HashMap<&'a str, ActionStats>, failure::Error> {
-    let context_action_storage = ContextActionStorage::new(persistent_storage);
-    let block_storage = BlockStorage::new(persistent_storage);
-    let stats: Mutex<HashMap<&str, ActionStats>> = Mutex::new(HashMap::new());
-
-    let blocks = block_storage.get_multiple_without_json(
-        &HashType::BlockHash.string_to_bytes(from_block).unwrap(), std::usize::MAX)?;
-    blocks.par_iter().for_each(|block| {
-        let actions = get_block_actions_by_hash(&context_action_storage, &block.hash).expect("Failed to extract actions from a block!");
-        let mut stats = stats.lock().expect("Unable to lock mutex!");
-        actions.iter().for_each(|action| match action {
-            ContextAction::Set { start_time, end_time, .. } => add_action(&mut stats, "SET", *end_time - *start_time),
-            ContextAction::Delete { start_time, end_time, .. } => add_action(&mut stats, "DEL", *end_time - *start_time),
-            ContextAction::RemoveRecursively { start_time, end_time, .. } => add_action(&mut stats, "REMREC", *end_time - *start_time),
-            ContextAction::Copy { start_time, end_time, .. } => add_action(&mut stats, "COPY", *end_time - *start_time),
-            ContextAction::Checkout { start_time, end_time, .. } => add_action(&mut stats, "CHECKOUT", *end_time - *start_time),
-            ContextAction::Commit { start_time, end_time, .. } => add_action(&mut stats, "COMMIT", *end_time - *start_time),
-            ContextAction::Mem { start_time, end_time, .. } => add_action(&mut stats, "MEM", *end_time - *start_time),
-            ContextAction::DirMem { start_time, end_time, .. } => add_action(&mut stats, "DIRMEM", *end_time - *start_time),
-            ContextAction::Get { start_time, end_time, .. } => add_action(&mut stats, "GET", *end_time - *start_time),
-            ContextAction::Fold { start_time, end_time, .. } => add_action(&mut stats, "FOLD", *end_time - *start_time),
-            ContextAction::Shutdown => {}
-        });
-    });
-
-    Ok(stats.into_inner().expect("Unable to access the contents of mutex!"))
 }
 
 #[inline]
