@@ -160,7 +160,7 @@ fn fat_tail_vec(fat_tail: TopN<ContextAction>) -> Vec<ContextAction> {
         .into_inner()
         .expect("Unable to get fat tail lock data!")
         .into_sorted_vec()
-        .drain(0..)
+        .into_iter()
         .map(move |reverse_wrapped| reverse_wrapped.0)
         .collect()
 }
