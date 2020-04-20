@@ -22,20 +22,43 @@ pub struct ActionStats {
     total_time: f64,
     total_actions: u32,
     action_type_stats: HashMap<String, ActionTypeStats>,
+    key_length_max: usize,
+    key_length_sum: u64,
+    val_length_max: usize,
+    val_length_sum: u64,
+}
+
+fn compute_key_length(key: Option<&Vec<String>>) -> usize {
+    match key {
+        Some(key) => key.into_iter().fold(0, |acc, item| acc + item.len()),
+        None => 0,
+    }
 }
 
 fn add_action<'a>(
     stats: &mut MutexGuard<HashMap<&'a str, ActionStats>>,
     action_name: &'a str,
     key: Option<&Vec<String>>,
+    value: Option<&Vec<u8>>,
     time: f64
 ) {
     let mut action_stats = stats
         .entry(action_name).or_insert(ActionStats {
-        action_type_stats: HashMap::new(), total_time: 0f64, total_actions: 0
+            action_type_stats: HashMap::new(), total_time: 0f64, total_actions: 0,
+            key_length_max: 0, val_length_max: 0, val_length_sum: 0, key_length_sum: 0
     });
     action_stats.total_time += time;
     action_stats.total_actions += 1;
+
+    let key_len = compute_key_length(key);
+    if key_len > action_stats.key_length_max { action_stats.key_length_max = key_len; }
+    action_stats.key_length_sum += key_len as u64;
+
+    let val_len = if value.is_some() { value.unwrap().len() } else { 0 };
+    action_stats.val_length_sum += val_len as u64;
+    if value.is_some() && (val_len > action_stats.val_length_max) {
+        action_stats.val_length_max = val_len;
+    }
 
     match key {
         Some(key) => {
@@ -67,23 +90,24 @@ impl<T: Ord + Clone> TopN<T> {
     pub fn new(max: usize) -> TopN<T> { return TopN { data: RwLock::new(BinaryHeap::new()), max } }
 
     pub fn add(&self, val: &T) {
-        let heap_len;
-        let should_add;
+        let mut should_add;
         {
             let data = self.data.read().expect("Unable to get a read-only lock!");
-            heap_len = data.len();
-            should_add = if data.is_empty() { true } else { data.peek().unwrap().0 < *val };
+            should_add = if data.len() < self.max { true } else { data.peek().unwrap().0 < *val };
+
+            if !should_add { return }; // no writing should take place -> exit
         } // drop the read lock
 
-        if heap_len < self.max { // heap not full, keep adding
-            let mut data = self.data.write().expect("Unable to get a write lock!");
+        let mut data = self.data.write().expect("Unable to get a write lock!");
+
+        if data.len() < self.max { // heap not full, add and exit
             return data.push(Reverse(val.clone()));
         }
 
+        should_add = if data.is_empty() { true } else { data.peek().unwrap().0 < *val };
         if should_add { // a new larger element, add it to the heap
-            let mut data_write = self.data.write().expect("Unable to get a write lock!");
-            data_write.pop();
-            data_write.push(Reverse(val.clone()));
+            data.pop();
+            data.push(Reverse(val.clone()));
         };
     }
 }
@@ -111,29 +135,29 @@ pub(crate) fn compute_storage_stats<'a>(
         {
             let mut stats = stats.lock().expect("Unable to lock mutex!");
             actions.iter().for_each(|action| match action {
-                ContextAction::Set { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "SET", Some(key), *end_time - *start_time),
+                ContextAction::Set { key, value, start_time, end_time, .. } =>
+                    add_action(&mut stats, "SET", Some(key), Some(value), *end_time - *start_time),
                 ContextAction::Delete { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "DEL", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "DEL", Some(key), None, *end_time - *start_time),
                 ContextAction::RemoveRecursively { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "REMREC", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "REMREC", Some(key), None, *end_time - *start_time),
                 ContextAction::Copy { start_time, end_time, .. } =>
-                    add_action(&mut stats, "COPY", None, *end_time - *start_time),
+                    add_action(&mut stats, "COPY", None, None, *end_time - *start_time),
                 ContextAction::Checkout { start_time, end_time, .. } =>
-                    add_action(&mut stats, "CHECKOUT", None, *end_time - *start_time),
+                    add_action(&mut stats, "CHECKOUT", None, None, *end_time - *start_time),
                 ContextAction::Commit { start_time, end_time, .. } =>
-                    add_action(&mut stats, "COMMIT", None, *end_time - *start_time),
+                    add_action(&mut stats, "COMMIT", None, None, *end_time - *start_time),
                 ContextAction::Mem { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "MEM", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "MEM", Some(key), None, *end_time - *start_time),
                 ContextAction::DirMem { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "DIRMEM", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "DIRMEM", Some(key), None, *end_time - *start_time),
                 ContextAction::Get { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "GET", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "GET", Some(key),None, *end_time - *start_time),
                 ContextAction::Fold { key, start_time, end_time, .. } =>
-                    add_action(&mut stats, "FOLD", Some(key), *end_time - *start_time),
+                    add_action(&mut stats, "FOLD", Some(key),None, *end_time - *start_time),
                 ContextAction::Shutdown => {}
             });
-        } // drop the mutex here
+        } // drop the stats mutex here
 
         actions.par_iter().for_each(|action| fat_tail.add(action));
     });
