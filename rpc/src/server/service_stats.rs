@@ -118,6 +118,27 @@ pub struct StatsResponse<'a> {
     stats: HashMap<&'a str, ActionStats>,
 }
 
+fn remove_values(mut actions: Vec<ContextAction>) -> Vec<ContextAction> {
+    actions.iter_mut().for_each(|action| match action {
+        ContextAction::Set { ref mut value, ref mut value_as_json, .. } => {
+            value.resize(0, 0);
+            *value_as_json = None;
+        },
+        _ => {}
+    });
+    actions
+}
+
+fn fat_tail_vec(fat_tail: TopN<ContextAction>) -> Vec<ContextAction> {
+    fat_tail.data
+        .into_inner()
+        .expect("Unable to get fat tail lock data!")
+        .into_sorted_vec()
+        .into_iter()
+        .map(move |reverse_wrapped| reverse_wrapped.0)
+        .collect()
+}
+
 pub(crate) fn compute_storage_stats<'a>(
     _state: &RpcCollectedStateRef,
     from_block: &str,
@@ -166,25 +187,4 @@ pub(crate) fn compute_storage_stats<'a>(
         fat_tail: remove_values(fat_tail_vec(fat_tail)),
         stats: stats.into_inner().expect("Unable to access the stat contents of mutex!"),
     })
-}
-
-fn remove_values(mut actions: Vec<ContextAction>) -> Vec<ContextAction> {
-    actions.iter_mut().for_each(|action| match action {
-        ContextAction::Set { ref mut value, ref mut value_as_json, .. } => {
-            value.resize(0, 0);
-            *value_as_json = None;
-        },
-        _ => {}
-    });
-    actions
-}
-
-fn fat_tail_vec(fat_tail: TopN<ContextAction>) -> Vec<ContextAction> {
-    fat_tail.data
-        .into_inner()
-        .expect("Unable to get fat tail lock data!")
-        .into_sorted_vec()
-        .into_iter()
-        .map(move |reverse_wrapped| reverse_wrapped.0)
-        .collect()
 }
