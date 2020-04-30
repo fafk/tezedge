@@ -146,47 +146,53 @@ caml!(ml_context_commit(parent_context_hash, block_hash, new_context_hash, time_
 });
 
 // External callback function for mem key from context
-caml!(ml_context_mem(context_hash, block_hash, operation_hash, key, time_period) {
+caml!(ml_context_mem(context_hash, block_hash, operation_hash, keyval, time_period) {
     let context_hash: Option<ContextHash> = to_hash(context_hash.into());
     let block_hash: Option<BlockHash> = to_hash(block_hash.into());
     let operation_hash: Option<OperationHash> = to_hash(operation_hash.into());
-    let key: ContextKey = List::from(key).convert_to();
+    let keyval: Tuple = keyval.into();
+    let key: ContextKey = List::from(keyval.get(0).unwrap()).convert_to();
+    let value: bool = keyval.get(1).unwrap().i32_val() > 0;
 
     let time_period: Tuple = time_period.into();
     let start_time: f64 = time_period.get(0).unwrap().f64_val();
     let end_time: f64 = time_period.get(1).unwrap().f64_val();
 
-    context_mem(context_hash, block_hash, operation_hash, key, start_time, end_time);
+    context_mem(context_hash, block_hash, operation_hash, key, value, start_time, end_time);
     return Value::unit();
 });
 
 // External callback function for dir_mem key from context
-caml!(ml_context_dir_mem(context_hash, block_hash, operation_hash, key, time_period) {
+caml!(ml_context_dir_mem(context_hash, block_hash, operation_hash, keyval, time_period) {
     let context_hash: Option<ContextHash> = to_hash(context_hash.into());
     let block_hash: Option<BlockHash> = to_hash(block_hash.into());
     let operation_hash: Option<OperationHash> = to_hash(operation_hash.into());
-    let key: ContextKey = List::from(key).convert_to();
+    let keyval: Tuple = keyval.into();
+    let key: ContextKey = List::from(keyval.get(0).unwrap()).convert_to();
+    let value: bool = keyval.get(1).unwrap().i32_val() > 0;
 
     let time_period: Tuple = time_period.into();
     let start_time: f64 = time_period.get(0).unwrap().f64_val();
     let end_time: f64 = time_period.get(1).unwrap().f64_val();
 
-    context_dir_mem(context_hash, block_hash, operation_hash, key, start_time, end_time);
+    context_dir_mem(context_hash, block_hash, operation_hash, key, value, start_time, end_time);
     return Value::unit();
 });
 
 // External callback function for raw_get key from context
-caml!(ml_context_raw_get(context_hash, block_hash, operation_hash, key, time_period) {
+caml!(ml_context_raw_get(context_hash, block_hash, operation_hash, keyval, time_period) {
     let context_hash: Option<ContextHash> = to_hash(context_hash.into());
     let block_hash: Option<BlockHash> = to_hash(block_hash.into());
     let operation_hash: Option<OperationHash> = to_hash(operation_hash.into());
-    let key: ContextKey = List::from(key).convert_to();
+    let keyval: Tuple = keyval.into();
+    let key: ContextKey = List::from(keyval.get(0).unwrap()).convert_to();
+    let value: ContextValue = OcamlBytes::from(keyval.get(1).unwrap()).convert_to();
 
     let time_period: Tuple = time_period.into();
     let start_time: f64 = time_period.get(0).unwrap().f64_val();
     let end_time: f64 = time_period.get(1).unwrap().f64_val();
 
-    context_raw_get(context_hash, block_hash, operation_hash, key, start_time, end_time);
+    context_raw_get(context_hash, block_hash, operation_hash, key, value, start_time, end_time);
     return Value::unit();
 });
 
@@ -316,14 +322,17 @@ fn context_mem(
     block_hash: Option<BlockHash>,
     operation_hash: Option<OperationHash>,
     key: ContextKey,
+    value: bool,
     start_time: f64,
     end_time: f64)
 {
+    println!("MEM RET VAL :::::::: => {}", value);
     context_send(ContextAction::Mem {
         context_hash,
         block_hash,
         operation_hash,
         key,
+        value,
         start_time,
         end_time,
     }).expect("context_mem error");
@@ -334,14 +343,17 @@ fn context_dir_mem(
     block_hash: Option<BlockHash>,
     operation_hash: Option<OperationHash>,
     key: ContextKey,
+    value: bool,
     start_time: f64,
     end_time: f64)
 {
+    println!("DIR MEM RET VAL :::::::: => {}", value);
     context_send(ContextAction::DirMem {
         context_hash,
         block_hash,
         operation_hash,
         key,
+        value,
         start_time,
         end_time,
     }).expect("context_dir_mem error");
@@ -352,6 +364,7 @@ fn context_raw_get(
     block_hash: Option<BlockHash>,
     operation_hash: Option<OperationHash>,
     key: ContextKey,
+    value: ContextValue,
     start_time: f64,
     end_time: f64)
 {
@@ -360,6 +373,7 @@ fn context_raw_get(
         block_hash,
         operation_hash,
         key,
+        value,
         start_time,
         end_time,
     }).expect("context_get error");
