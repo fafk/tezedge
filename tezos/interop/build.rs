@@ -116,7 +116,7 @@ fn run_builder(build_chain: &str) {
             // check we want to update git updates or just skip updates, because of development process and changes on ocaml side, which are not yet in git
             let update_git = env::var("UPDATE_GIT").unwrap_or("true".to_string()).parse::<bool>().unwrap();
             if update_git {
-                update_git_repository();
+//                update_git_repository();
             }
 
             check_prerequisites();
